@@ -25,7 +25,7 @@ pip install -e .
 
 1. **`core/` 物理基础层**：
    - 定义材料属性和光学器件物理常量。
-   - 实现底层的微环谐振器（MRR）器件物理（Lorentzian 近似，$V^2$ 热光调谐，最近邻/全局衰减热串扰）。
+   - 实现底层的微环谐振器（MRR）器件物理（Lorentzian 近似，V² 热光调谐，最近邻/全局衰减热串扰）。
 2. **`components/` 器件抽象层**：
    - 定义光学组件抽象基类 `OpticalComponent` 与统一的光信号接口 `OpticalSignal`。
    - 包括电光调制器（EOM）、光电探测器（PD）、MRR权重滤波器（MRRBankFilter）和光纤（FiberSpan）。
@@ -75,13 +75,17 @@ print(output_signal.powers)
 本项目的所有组件均基于工业界与学术界的严谨物理公式进行建模。
 
 ### 1. Lorentzian 透射谱 (Lorentzian Transmission Spectrum)
-光信号经过 MRR 的透射率受 Lorentzian 分布控制（Notch Filter）。透射率 $T(\lambda)$ 依赖于波长失谐 $\delta$ 和半高半宽 $\gamma$：
+光信号经过 MRR 的透射率受 Lorentzian 分布控制（Notch Filter）。透射率 T(λ) 依赖于波长失谐 δ 和半高半宽 γ：
 
 ```math
 T(\delta) = 1 - \frac{1 - T_{min}}{1 + (\delta / \gamma)^2}
 ```
 
-*其中，$\delta = (\lambda - \lambda_{res} + FSR/2) \mod FSR - FSR/2$ 实现周期折叠。*
+其中，δ 的计算包含 FSR 周期折叠：
+
+```math
+\delta = (\lambda - \lambda_{res} + FSR/2) \bmod FSR - FSR/2
+```
 
 ![Lorentzian Spectrum](docs/figures/lorentzian_spectrum.png)
 
@@ -95,8 +99,8 @@ P = \frac{V^2}{R_{heater}} \\
 
 ![V² Tuning](docs/figures/v2_tuning.png)
 
-### 3. $N \times N$ 全局热串扰矩阵 (Thermal Crosstalk Matrix)
-在 MRR Bank 中，相邻器件相互影响的串扰随物理距离呈指数衰减。此仿真使用了完整的 $N \times N$ 全局干扰矩阵计算真实影响。
+### 3. N×N 全局热串扰矩阵 (Thermal Crosstalk Matrix)
+在 MRR Bank 中，相邻器件相互影响的串扰随物理距离呈指数衰减。此仿真使用了完整的 N×N 全局干扰矩阵计算真实影响。
 
 ```math
 C_{i,j} = \begin{cases} 
@@ -105,7 +109,11 @@ C_{i,j} = \begin{cases}
 \end{cases}
 ```
 
-*实际波长偏移向量为* $\Delta\mathbf{\lambda}_{total} = C \times \Delta\mathbf{\lambda}_{ideal}$。
+实际波长偏移向量为：
+
+```math
+\Delta\boldsymbol{\lambda}_{total} = C \times \Delta\boldsymbol{\lambda}_{ideal}
+```
 
 ![Crosstalk Matrix](docs/figures/crosstalk_matrix.png)
 
@@ -124,9 +132,9 @@ C_{i,j} = \begin{cases}
 1. **Bai et al.**, "Microcomb-based integrated photonic processing unit", *Nature Communications*, 2023. DOI: [10.1038/s41467-022-35506-9](https://doi.org/10.1038/s41467-022-35506-9)
    *(为本项目的 WavelengthGrid、FSR (91GHz), 以及梳齿配置提供原型)*
 2. **Liu et al.**, "Calibration-free and precise programming of large-scale ring resonator circuits", *Optica*, 2025. DOI: [10.1364/OPTICA.557415](https://doi.org/10.1364/OPTICA.557415)
-   *(为全局串扰矩阵 $C_{ij}$、二次方电压控制提供物理依据与标杆对照)*
+   *(为全局串扰矩阵 C_ij、二次方电压控制提供物理依据与标杆对照)*
 3. **Huang et al.**, "Demonstration of scalable microring weight bank control", *APL Photonics*, 2020. DOI: [10.1063/1.5144121](https://doi.org/10.1063/1.5144121)
-   *(为调谐效率与单环 V²->$\Delta\lambda$ 提供实测参量支持)*
+   *(为调谐效率与单环 V²→Δλ 提供实测参量支持)*
 
 ## 证书
 
