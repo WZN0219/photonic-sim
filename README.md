@@ -76,29 +76,35 @@ print(output_signal.powers)
 
 ### 1. Lorentzian 透射谱 (Lorentzian Transmission Spectrum)
 光信号经过 MRR 的透射率受 Lorentzian 分布控制（Notch Filter）。透射率 $T(\lambda)$ 依赖于波长失谐 $\delta$ 和半高半宽 $\gamma$：
-$$
+
+```math
 T(\delta) = 1 - \frac{1 - T_{min}}{1 + (\delta / \gamma)^2}
-$$
+```
+
 *其中，$\delta = (\lambda - \lambda_{res} + FSR/2) \mod FSR - FSR/2$ 实现周期折叠。*
 
 ![Lorentzian Spectrum](docs/figures/lorentzian_spectrum.png)
 
 ### 2. V² 热光调谐 (V² Thermal Tuning Law)
 与简化版仿真不同，真实的微环热源为微电阻，在欧姆加热的物理规律下，其产生的波长偏移与电压平方成正比。
-$$
+
+```math
 P = \frac{V^2}{R_{heater}} \\
 \Delta\lambda = \eta \cdot P 
-$$
+```
+
 ![V² Tuning](docs/figures/v2_tuning.png)
 
 ### 3. $N \times N$ 全局热串扰矩阵 (Thermal Crosstalk Matrix)
 在 MRR Bank 中，相邻器件相互影响的串扰随物理距离呈指数衰减。此仿真使用了完整的 $N \times N$ 全局干扰矩阵计算真实影响。
-$$
+
+```math
 C_{i,j} = \begin{cases} 
 1.0 & i=j \\ 
 \alpha \cdot e^{-\frac{|i-j|}{L}} & i \neq j 
 \end{cases}
-$$
+```
+
 *实际波长偏移向量为* $\Delta\mathbf{\lambda}_{total} = C \times \Delta\mathbf{\lambda}_{ideal}$。
 
 ![Crosstalk Matrix](docs/figures/crosstalk_matrix.png)
