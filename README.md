@@ -1,141 +1,312 @@
-# photonic-sim: 研究级 WDM MRR 仿真平台
+# photonic-sim
 
-`photonic-sim` 是一个独立的底层光子仿真组件库，旨在为光子计算芯片（如基于微梳和微环谐振器阵列的 Optical Neural Networks）的权重编程、热漂移校准和 AI 控制策略验证提供物理准确的、可扩展的仿真环境。
+`photonic-sim` 是一个面向 **WDM MRR 在线调谐 / 校准 / 控制验证** 的研究级仿真库。  
+当前版本聚焦于“论文充分仿真”的第一层目标：
 
-本项目通过严谨的物理公式实现器件建模，采用组件化（Component-based）设计，支持通过将光信号（Optical Signal）在不同光学组件（MRR、调制器、探测器等）间传递来搭建端到端的复杂光链路。
+- 不追求工业级多物理场高精度
+- 不把所有真实细节一次堆满
+- 优先保证 **闭环语义正确、观测边界正确、误差来源正确**
 
-## 环境要求与安装
+这版代码的核心用途是为以下研究任务提供底座：
 
-### 运行环境
-- Python >= 3.8
-- 核心依赖：`numpy>=1.20`, `scipy>=1.7`
-- 画图依赖（可选，用于生成测试及汇报图表）：`matplotlib`
+- MRR 阵列在线重调
+- calibration-aware active sensing
+- budgeted observation
+- collision-aware retuning
+- 后续的 memory / agent / controller 策略验证
 
-### 安装
-克隆代码库并在当前环境内以可编辑模式安装：
-```bash
-git clone <repository_url>
+## 设计原则
+
+这个库不是传统的 “公式演示 + 一次性 forward” 工具库。  
+它也不是工业级 TCAD。
+
+它追求的是：
+
+**问题驱动的最小真实（minimal realism for the target research question）**
+
+也就是只保留会改变论文结论的因素：
+
+- 显式 latent plant state
+- 动作驱动的时间推进
+- 分离的仪器层
+- 固定量程 ADC
+- 观测时间戳 / 版本 / 质量标志
+- 最小执行器约束和安全边界
+
+## 当前版本已经具备的能力
+
+### 1. MRR 阵列 latent plant
+
+- `MRRArrayPlant`
+- 每个 ring 有独立 actuator target / actuator state / thermal state
+- 支持全局热串扰矩阵
+- 支持随机漂移
+- 支持全局温漂偏置
+
+### 2. Step-based runtime
+
+- `issue_command()` / `apply_voltage()`
+- `step(dt_ms)`
+- 显式时间推进，而不是瞬时写入终态
+
+### 3. 一阶热动态
+
+当前动力学链路为：
+
+`voltage -> electrical power -> thermal power -> resonance shift`
+
+这比“电压直接低通到 shift”更接近热调谐设备的基本物理语义，同时仍保持足够轻量。
+
+### 4. Instrument layer
+
+当前提供两类仪器：
+
+- `PDInstrument`
+- `OSAInstrument`
+
+二者都返回统一的 `MeasurementFrame`，包含：
+
+- `timestamp_ms`
+- `calib_version`
+- `quality_flag`
+- `payload`
+- `metadata`
+
+### 5. Fixed-range ADC
+
+`PDInstrument` 使用固定满量程 `full_scale_current_ma` 和固定 bitwidth：
+
+- 不再按当前样本动态缩放
+- 能显式表达量化误差
+- 能显式表达 saturation
+
+### 6. Execution and safety
+
+当前提供最小执行器和安全模块：
+
+- `ActionExecutor`
+  - 电压 clamp
+  - slew rate
+- `SafetyGuard`
+  - self shift clamp
+  - total shift warning
+
+## 当前版本还没有覆盖的内容
+
+这很重要。当前版本还 **不是** 完整的 calibration-aware online retuning simulator。
+
+仍缺少：
+
+- calibration bootstrap
+- belief state estimator
+- agent / controller layer
+- active probe action
+- budget accountant
+- add-drop / drop-port 精细模型
+- 更真实的 OSA RBW 卷积
+- 更复杂的热-电 RC 网络
+- 多仪器异步调度总线
+
+这些会在现有 runtime 骨架上继续迭代。
+
+## 目录结构
+
+```text
+photonic-sim/
+├── photonic_sim/
+│   ├── __init__.py
+│   ├── config.py
+│   ├── execution.py
+│   ├── instruments.py
+│   ├── physics.py
+│   ├── plant.py
+│   ├── runtime.py
+│   └── types.py
+├── examples/
+│   └── verify_runtime.py
+├── tests/
+│   └── test_runtime.py
+├── MIGRATION_NOTES.md
+├── README.md
+├── pyproject.toml
+├── requirements.txt
+└── .gitignore
+```
+
+## 安装
+
+### 方式 1：本地可编辑安装
+
+```powershell
 cd photonic-sim
 pip install -e .
 ```
 
-## 基本组件架构
+### 方式 2：不安装，直接在仓库目录运行
 
-`photonic-sim` 主要分为三个核心层级：
+当前 `examples/verify_runtime.py` 和 `tests/test_runtime.py` 已经带了本地路径注入，
+所以在仓库根目录下可以直接运行。
 
-1. **`core/` 物理基础层**：
-   - 定义材料属性和光学器件物理常量。
-   - 实现底层的微环谐振器（MRR）器件物理（Lorentzian 近似，V² 热光调谐，最近邻/全局衰减热串扰）。
-2. **`components/` 器件抽象层**：
-   - 定义光学组件抽象基类 `OpticalComponent` 与统一的光信号接口 `OpticalSignal`。
-   - 包括电光调制器（EOM）、光电探测器（PD）、MRR权重滤波器（MRRBankFilter）和光纤（FiberSpan）。
-3. **`link/` 链路编排层**：
-   - 提供 `OpticalLink` 用于任意光学组件的前向串联。
+## 快速上手
 
-## 如何使用 (Quick Start)
-
-以下展示如何使用本仿真平台搭建一个 **EOM调制 → MRR权重调整 → PD探测** 的基本光链路：
+### 1. 创建一个最小 MRR runtime
 
 ```python
 import numpy as np
-from photonic_sim.core import WavelengthGrid, MRRWeightBank
-from photonic_sim.components import create_comb_signal, EOMModulator, MRRBankFilter, Photodetector
-from photonic_sim.link import OpticalLink
 
-# 1. 初始化物理系统
-# 生成包含 9 个波长的微梳光源 (FSR=0.73nm)
-grid = WavelengthGrid(center_nm=1550.0, fsr_nm=0.73, num_lines=9)
-# 创建 9 通道 MRR 阵列并编程目标权重
-target_weights = np.array([0.5, -0.3, 0.8, -0.1, 0.9, -0.7, 0.2, 0.4, -0.5])
-bank = MRRWeightBank(num_weights=9, comb_wavelengths_nm=grid.wavelengths)
-bank.program_weights(target_weights)
+from photonic_sim import (
+    ActionExecutorConfig,
+    MRRArrayPlant,
+    MRRPlantConfig,
+    PDInstrument,
+    PDInstrumentConfig,
+    SimulationRuntime,
+    build_comb_wavelengths,
+)
 
-# 2. 搭建端到端光链路
-link = OpticalLink([
-    EOMModulator(insertion_loss_db=1.0),            # EOM 调制器，损耗 1dB
-    MRRBankFilter(bank),                            # MRR 滤波器阵列
-    Photodetector(responsivity=0.8, adc_bits=10),   # 探测器（含散粒噪声和 10-bit 量化）
-])
+comb = build_comb_wavelengths(center_nm=1550.0, fsr_nm=0.73, num_lines=3)
 
-# 3. 生成输入光信号并携带数据
-# 生成均一功率为 1.0mW 的各通道梳齿信号
-signal = create_comb_signal(grid, power_per_line_mw=1.0, num_channels=9)
-# EOM 输入电数据
-signal.data = np.array([0.8, 0.6, 0.9, 0.3, 1.0, 0.5, 0.7, 0.4, 0.2])
+plant = MRRArrayPlant(
+    num_rings=3,
+    comb_wavelengths_nm=comb,
+    config=MRRPlantConfig(
+        thermal_tau_ms=5.0,
+        drift_sigma_nm_per_s=0.0,
+    ),
+    rng=np.random.default_rng(0),
+    action_config=ActionExecutorConfig(
+        max_voltage_v=5.0,
+        slew_rate_v_per_ms=2.0,
+    ),
+)
 
-# 4. 执行前向仿真
-output_signal = link.forward(signal)
-
-print("输出各通道探测光电流 (mA):")
-print(output_signal.powers)
+runtime = SimulationRuntime(
+    plant=plant,
+    pd_instrument=PDInstrument(
+        PDInstrumentConfig(
+            adc_bits=10,
+            full_scale_current_ma=0.2,
+            frame_period_ms=2.0,
+            noise_sigma=0.001,
+        ),
+        rng=np.random.default_rng(1),
+    ),
+)
 ```
 
-## 物理公式与器件模型
+### 2. 下发动作并推进时间
 
-本项目的所有组件均基于工业界与学术界的严谨物理公式进行建模。
+```python
+ack = runtime.apply_voltage(channel=1, voltage_v=3.0)
+print(ack)
 
-### 1. Lorentzian 透射谱 (Lorentzian Transmission Spectrum)
-光信号经过 MRR 的透射率受 Lorentzian 分布控制（Notch Filter）。透射率 T(λ) 依赖于波长失谐 δ 和半高半宽 γ：
+runtime.step(2.0)
+runtime.step(2.0)
 
-```math
-T(\delta) = 1 - \frac{1 - T_{min}}{1 + (\delta / \gamma)^2}
+state = runtime.plant.latent_state()
+print(state.actuator_voltages_v)
+print(state.thermal_powers_mw)
+print(state.effective_resonances_nm)
 ```
 
-其中，δ 的计算包含 FSR 周期折叠：
+### 3. 读取 PD 观测
 
-```math
-\delta = (\lambda - \lambda_{res} + FSR/2) \bmod FSR - FSR/2
+```python
+frame = runtime.read_pd(input_powers_mw=np.ones(3))
+
+print(frame.instrument_type)
+print(frame.timestamp_ms)
+print(frame.quality_flag)
+print(frame.payload["quantized_currents_ma"])
+print(frame.metadata)
 ```
 
-![Lorentzian Spectrum](docs/figures/lorentzian_spectrum.png)
+### 4. 读取 OSA 观测
 
-### 2. V² 热光调谐 (V² Thermal Tuning Law)
-与简化版仿真不同，真实的微环热源为微电阻，在欧姆加热的物理规律下，其产生的波长偏移与电压平方成正比。
+```python
+from photonic_sim import OSAInstrument, OSAInstrumentConfig
 
-```math
-P = \frac{V^2}{R_{heater}} \\
-\Delta\lambda = \eta \cdot P 
+runtime.osa = OSAInstrument(
+    OSAInstrumentConfig(
+        step_pm=10.0,
+        span_nm=0.6,
+        frame_period_ms=5.0,
+    ),
+    rng=np.random.default_rng(2),
+)
+
+osa = runtime.read_osa()
+print(osa.payload["wavelengths_nm"][:5])
+print(osa.payload["spectrum_dbm"][:5])
 ```
 
-![V² Tuning](docs/figures/v2_tuning.png)
+## 如何验证当前库
 
-### 3. N×N 全局热串扰矩阵 (Thermal Crosstalk Matrix)
-在 MRR Bank 中，相邻器件相互影响的串扰随物理距离呈指数衰减。此仿真使用了完整的 N×N 全局干扰矩阵计算真实影响。
+### 1. 运行单元测试
 
-```math
-C_{i,j} = \begin{cases} 
-1.0 & i=j \\ 
-\alpha \cdot e^{-\frac{|i-j|}{L}} & i \neq j 
-\end{cases}
+```powershell
+cd photonic-sim
+python -m pytest tests -q
 ```
 
-实际波长偏移向量为：
+当前测试覆盖：
 
-```math
-\Delta\boldsymbol{\lambda}_{total} = C \times \Delta\boldsymbol{\lambda}_{ideal}
+- actuator / thermal state 需要通过时间推进才生效
+- executor clamp 和 safety warning
+- fixed-range ADC saturation
+- fresh / stale measurement frame 语义
+
+### 2. 运行手动验证脚本
+
+```powershell
+python examples/verify_runtime.py
 ```
 
-![Crosstalk Matrix](docs/figures/crosstalk_matrix.png)
+该脚本会打印 3 类验证结果：
 
-### 4. 权重编程仿真结果 (Weight Programming)
-由于存在强烈的热串扰和底层随机漂移（drifting noise），施加的物理操作（电压）必然带来额外的静态误差。下图展示了闭环目标权重与包含系统性误差在内的实际底层权重对比分布。
-![Weight Programming](docs/figures/weight_programming.png)
+- `voltage -> power -> thermal state -> shift`
+- `PD / OSA` measurement frame
+- executor clamp 与 safety guard
 
-### 5. 端到端光链路功率流 (End-to-End Link Power Flow)
-当组件如珠串链起来执行时，每到一个组件光信号的功率便会受到调制、衰减或吸收，最后在探测器转换为光电流并呈现离散量化阶级。
-![Link Power](docs/figures/link_power.png)
+## 当前适合做哪些实验
 
-## 参考工作与文献对照
+在当前版本上，已经适合做以下实验：
 
-仿真底层建模直接对标前沿研究：
+- actuator step response
+- thermal crosstalk sweep
+- drift sensitivity sweep
+- PD / OSA 观测链测试
+- ADC saturation / bitwidth sweep
+- safety threshold stress test
+- calibration 数据采集前的基础动态验证
 
-1. **Bai et al.**, "Microcomb-based integrated photonic processing unit", *Nature Communications*, 2023. DOI: [10.1038/s41467-022-35506-9](https://doi.org/10.1038/s41467-022-35506-9)
-   *(为本项目的 WavelengthGrid、FSR (91GHz), 以及梳齿配置提供原型)*
-2. **Liu et al.**, "Calibration-free and precise programming of large-scale ring resonator circuits", *Optica*, 2025. DOI: [10.1364/OPTICA.557415](https://doi.org/10.1364/OPTICA.557415)
-   *(为全局串扰矩阵 C_ij、二次方电压控制提供物理依据与标杆对照)*
-3. **Huang et al.**, "Demonstration of scalable microring weight bank control", *APL Photonics*, 2020. DOI: [10.1063/1.5144121](https://doi.org/10.1063/1.5144121)
-   *(为调谐效率与单环 V²→Δλ 提供实测参量支持)*
+当前还不适合直接做：
 
-## 证书
+- 完整 calibration-aware retuning 闭环论文主实验
+- probe-driven identity recovery
+- memory / agent / MPC 公平对比
 
-MIT License
+## 和旧版相比最大的变化
+
+旧版主要问题是：
+
+- 目标权重直接反解
+- 无显式时间推进
+- 光域 / 电域混在一个 carrier
+- ADC 按当前样本动态缩放
+
+新版重构优先修正了这些结构问题。详细说明见：
+
+- [MIGRATION_NOTES.md](./MIGRATION_NOTES.md)
+
+## 下一步路线
+
+建议接下来的实现顺序：
+
+1. `CalibrationBootstrap`
+2. `BeliefStateEstimator`
+3. `Budget / Cost Accountant`
+4. `Agent / Controller Core`
+
+也就是说，当前版本已经把“器件-执行器-仪器-runtime”这层打通，
+后续可以在它之上长出校准和智能控制层。
