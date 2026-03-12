@@ -91,17 +91,50 @@
   - self shift clamp
   - total shift warning
 
+### 7. Calibration bootstrap
+
+当前已经提供最小离线校准摘要模块：
+
+- `CalibrationBootstrap`
+- 从基础实验输出中提取：
+  - step response 时间常数
+  - tuning efficiency
+  - crosstalk profile
+  - 推荐 PD / OSA 配置
+
+它的定位是为后续 agent / estimator 提供初始化先验，
+而不是替代在线 belief state estimator。
+
+### 8. Inference primitives
+
+当前已经补齐一组最小推理原语，用于保持 agent 主线所需的内部状态语义，同时避免把策略层塞进底层库：
+
+- `CalibrationState`
+- `BeliefState`
+- `SimpleBeliefStateEstimator`
+- `RecoveryTrigger`
+
+它们的定位是：
+
+- 把 `CalibrationBootstrap` 结果变成在线可消费的先验状态
+- 在不读取 latent state 的前提下维护最小 belief
+- 为后续 planner / controller 提供统一的恢复触发语义
+
+当前这层仍然是轻量基元，而不是完整 memory / planner / agent framework。
+
 ## 当前版本还没有覆盖的内容
 
 这很重要。当前版本还 **不是** 完整的 calibration-aware online retuning simulator。
 
-仍缺少：
+当前已经有 `CalibrationBootstrap`，但仍缺：
 
-- calibration bootstrap
-- belief state estimator
-- agent / controller layer
+- task-grade belief state estimator
+- memory manager
+- observation planner
+- recovery / recalibration policy
 - active probe action
-- budget accountant
+- heuristic / controller baseline
+- learned agent / controller layer
 - add-drop / drop-port 精细模型
 - 更真实的 OSA RBW 卷积
 - 更复杂的热-电 RC 网络
@@ -115,17 +148,36 @@
 photonic-sim/
 ├── photonic_sim/
 │   ├── __init__.py
+│   ├── agent.py
+│   ├── calibration.py
 │   ├── config.py
+│   ├── controller.py
 │   ├── execution.py
+│   ├── inference.py
 │   ├── instruments.py
 │   ├── physics.py
 │   ├── plant.py
 │   ├── runtime.py
 │   └── types.py
+├── docs/
+│   └── AGENT_CONTROL_SPEC.md
 ├── examples/
 │   └── verify_runtime.py
+├── experiments/
+│   ├── README.md
+│   ├── run_step_response.py
+│   ├── run_crosstalk_scan.py
+│   ├── run_observation_chain_sweep.py
+│   ├── run_drift_observation_dataset.py
+│   ├── run_calibration_bootstrap.py
+│   ├── run_agent_retuning_baseline.py
+│   ├── run_belief_recovery_probe.py
+│   └── visualize_experiments.py
 ├── tests/
-│   └── test_runtime.py
+│   ├── test_agent.py
+│   ├── test_calibration.py
+│   ├── test_inference.py
+│   ├── test_runtime.py
 ├── MIGRATION_NOTES.md
 ├── README.md
 ├── pyproject.toml
@@ -255,6 +307,9 @@ python -m pytest tests -q
 - executor clamp 和 safety warning
 - fixed-range ADC saturation
 - fresh / stale measurement frame 语义
+- calibration bootstrap 摘要构建
+- task / budget / agent baseline 基本语义
+- belief update 与 recovery trigger 最小链路
 
 ### 2. 运行手动验证脚本
 
@@ -267,6 +322,29 @@ python examples/verify_runtime.py
 - `voltage -> power -> thermal state -> shift`
 - `PD / OSA` measurement frame
 - executor clamp 与 safety guard
+
+## 当前主线：Agent 调控
+
+当前主线已经从“继续扩展底层架构”切回到“明确 agent 要解决什么调控任务”。
+
+现有 runtime 已经足够支撑 agent-facing 需求分析：
+
+- 动作入口：`apply_voltage()`
+- 时间推进：`step(dt_ms)`
+- 观测入口：`read_pd()` / `read_osa()`
+- 统一观测语义：`MeasurementFrame`
+- 动作回执：`ActionAck`
+
+当前实验的定位不是长期停留在底层表征，而是为 agent 调控提供：
+
+- thermal / crosstalk 先验
+- 观测链约束
+- 预算与采样频率边界
+- 漂移场景下的离线评估数据
+
+agent 主线规格见：
+
+- [docs/AGENT_CONTROL_SPEC.md](./docs/AGENT_CONTROL_SPEC.md)
 
 ## 当前适合做哪些实验
 
@@ -286,6 +364,39 @@ python examples/verify_runtime.py
 - probe-driven identity recovery
 - memory / agent / MPC 公平对比
 
+换句话说，这些实验当前更适合作为 agent 主线的前置表征，
+而不是项目的最终研究落点。
+
+## 当前推荐的实验入口
+
+如果你准备先补齐 agent 调控所需的前置数据，推荐按这个顺序运行：
+
+```powershell
+python experiments/run_step_response.py
+python experiments/run_crosstalk_scan.py
+python experiments/run_observation_chain_sweep.py
+python experiments/run_drift_observation_dataset.py
+python experiments/run_calibration_bootstrap.py
+python experiments/run_agent_retuning_baseline.py
+python experiments/run_belief_recovery_probe.py
+```
+
+这些脚本对应的实验目标分别是：
+
+- 执行器阶跃响应
+- 热串扰扫描
+- PD / OSA 观测链与 ADC sweep
+- 漂移长时间观测数据生成
+- 生成最小校准摘要供 agent / estimator 初始化使用
+- 在统一 task / budget / observation 语义下跑第一版 agent baseline
+- 观察 belief update 与 recovery trigger 的最小推理链路
+
+默认输出目录为：
+
+```text
+experiments/outputs/
+```
+
 ## 和旧版相比最大的变化
 
 旧版主要问题是：
@@ -303,10 +414,15 @@ python examples/verify_runtime.py
 
 建议接下来的实现顺序：
 
-1. `CalibrationBootstrap`
-2. `BeliefStateEstimator`
-3. `Budget / Cost Accountant`
-4. `Agent / Controller Core`
+1. `Agent Task Spec`
+2. `Budget / Cost Accountant`
+3. `AgentEnv` 与 observation / action contract
+4. `CalibrationState / BeliefState / RecoveryTrigger`
+5. `Task-grade BeliefStateEstimator`
+6. `Observation Planner + Recovery Policy`
+7. `Heuristic / Controller Baseline`
+8. `Agent / Controller Core`
 
 也就是说，当前版本已经把“器件-执行器-仪器-runtime”这层打通，
-后续可以在它之上长出校准和智能控制层。
+而下一阶段的主问题不再是继续堆底层细节，
+而是把 agent 调控任务、信息边界、预算约束和评估协议定义清楚。

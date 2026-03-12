@@ -83,7 +83,9 @@
 ## 当前仍未完成的重构项
 
 - add-drop / drop-port 更真实的端口模型
-- calibration bootstrap 模块
+- agent task spec / env contract
+- belief state estimator
+- budget accountant
 - controller / agent 接口
 - OSA RBW 卷积与更真实噪声
 - 事件调度器和多仪器异步采样总线
@@ -92,7 +94,8 @@
 
 ## 推荐后续顺序
 
-1. 先补 `ActionExecutor + SafetyGuard`
-2. 再补 `CalibrationBootstrap`
-3. 再定义 `BeliefStateEstimator` 的输入输出
-4. 最后再接 `Agent Core`
+1. 先固定 `TaskSpec`
+2. 再补 `BudgetAccountant`
+3. 再定义 `AgentEnv` 的输入输出
+4. 再接 `BeliefStateEstimator`
+5. 最后再接 `Agent Core`
