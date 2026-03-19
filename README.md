@@ -1,70 +1,45 @@
 # photonic-sim
 
-`photonic-sim` 是一个面向 **WDM MRR 在线调谐 / 校准 / 控制验证** 的研究级仿真库。  
-当前版本聚焦于“论文充分仿真”的第一层目标：
+`photonic-sim` 是一个面向 **WDM MRR 阵列** 的底层仿真库，用于提供：
 
-- 不追求工业级多物理场高精度
-- 不把所有真实细节一次堆满
-- 优先保证 **闭环语义正确、观测边界正确、误差来源正确**
+- MRR 阵列植物理状态演化
+- 电压动作与时间推进
+- `PD` / `OSA` 仪器观测
+- 基础校准摘要与最小推理原语
+- 可复现的 characterization / baseline 实验脚本
 
-这版代码的核心用途是为以下研究任务提供底座：
+## 主要能力
 
-- MRR 阵列在线重调
-- calibration-aware active sensing
-- budgeted observation
-- collision-aware retuning
-- 后续的 memory / agent / controller 策略验证
-
-## 设计原则
-
-这个库不是传统的 “公式演示 + 一次性 forward” 工具库。  
-它也不是工业级 TCAD。
-
-它追求的是：
-
-**问题驱动的最小真实（minimal realism for the target research question）**
-
-也就是只保留会改变论文结论的因素：
-
-- 显式 latent plant state
-- 动作驱动的时间推进
-- 分离的仪器层
-- 固定量程 ADC
-- 观测时间戳 / 版本 / 质量标志
-- 最小执行器约束和安全边界
-
-## 当前版本已经具备的能力
-
-### 1. MRR 阵列 latent plant
+### 1. 植物理模型
 
 - `MRRArrayPlant`
-- 每个 ring 有独立 actuator target / actuator state / thermal state
-- 支持全局热串扰矩阵
-- 支持随机漂移
-- 支持全局温漂偏置
+- 每个 ring 的独立电压目标、执行器状态、热状态
+- 一阶热动态
+- 全局热串扰矩阵
+- 全局温漂偏置
+- 随机漂移项
 
-### 2. Step-based runtime
-
-- `issue_command()` / `apply_voltage()`
-- `step(dt_ms)`
-- 显式时间推进，而不是瞬时写入终态
-
-### 3. 一阶热动态
-
-当前动力学链路为：
+当前核心链路为：
 
 `voltage -> electrical power -> thermal power -> resonance shift`
 
-这比“电压直接低通到 shift”更接近热调谐设备的基本物理语义，同时仍保持足够轻量。
+### 2. Runtime
 
-### 4. Instrument layer
+- `SimulationRuntime.apply_voltage()`
+- `SimulationRuntime.step(dt_ms)`
+- `SimulationRuntime.read_pd()`
+- `SimulationRuntime.read_osa()`
+
+支持显式时间推进，而不是一步写入终态。
+
+### 3. 仪器层
 
 当前提供两类仪器：
 
 - `PDInstrument`
 - `OSAInstrument`
 
-二者都返回统一的 `MeasurementFrame`，包含：
+统一返回 `MeasurementFrame`，包含：
 
 - `timestamp_ms`
 - `calib_version`
@@ -72,17 +47,7 @@
 - `payload`
 - `metadata`
 
-### 5. Fixed-range ADC
-
-`PDInstrument` 使用固定满量程 `full_scale_current_ma` 和固定 bitwidth：
-
-- 不再按当前样本动态缩放
-- 能显式表达量化误差
-- 能显式表达 saturation
-
-### 6. Execution and safety
-
-当前提供最小执行器和安全模块：
+### 4. 执行器与安全约束
 
 - `ActionExecutor`
   - 电压 clamp
@@ -91,99 +56,16 @@
   - self shift clamp
   - total shift warning
 
-### 7. Calibration bootstrap
-
-当前已经提供最小离线校准摘要模块：
+### 5. 校准与推理原语
 
 - `CalibrationBootstrap`
-- 从基础实验输出中提取：
-  - step response 时间常数
-  - tuning efficiency
-  - crosstalk profile
-  - 推荐 PD / OSA 配置
-
-它的定位是为后续 agent / estimator 提供初始化先验，
-而不是替代在线 belief state estimator。
-
-### 8. Inference primitives
-
-当前已经补齐一组最小推理原语，用于保持 agent 主线所需的内部状态语义，同时避免把策略层塞进底层库：
-
 - `CalibrationState`
 - `BeliefState`
 - `SimpleBeliefStateEstimator`
 - `RecoveryTrigger`
+- `BootstrapRetuningController`
 
-它们的定位是：
-
-- 把 `CalibrationBootstrap` 结果变成在线可消费的先验状态
-- 在不读取 latent state 的前提下维护最小 belief
-- 为后续 planner / controller 提供统一的恢复触发语义
-
-当前这层仍然是轻量基元，而不是完整 memory / planner / agent framework。
-
-## 当前版本还没有覆盖的内容
-
-这很重要。当前版本还 **不是** 完整的 calibration-aware online retuning simulator。
-
-当前已经有 `CalibrationBootstrap`，但仍缺：
-
-- task-grade belief state estimator
-- memory manager
-- observation planner
-- recovery / recalibration policy
-- active probe action
-- heuristic / controller baseline
-- learned agent / controller layer
-- add-drop / drop-port 精细模型
-- 更真实的 OSA RBW 卷积
-- 更复杂的热-电 RC 网络
-- 多仪器异步调度总线
-
-这些会在现有 runtime 骨架上继续迭代。
-
-## 目录结构
-
-```text
-photonic-sim/
-├── photonic_sim/
-│   ├── __init__.py
-│   ├── agent.py
-│   ├── calibration.py
-│   ├── config.py
-│   ├── controller.py
-│   ├── execution.py
-│   ├── inference.py
-│   ├── instruments.py
-│   ├── physics.py
-│   ├── plant.py
-│   ├── runtime.py
-│   └── types.py
-├── docs/
-│   └── AGENT_CONTROL_SPEC.md
-├── examples/
-│   └── verify_runtime.py
-├── experiments/
-│   ├── README.md
-│   ├── run_step_response.py
-│   ├── run_crosstalk_scan.py
-│   ├── run_observation_chain_sweep.py
-│   ├── run_drift_observation_dataset.py
-│   ├── run_calibration_bootstrap.py
-│   ├── run_agent_retuning_baseline.py
-│   ├── run_belief_recovery_probe.py
-│   └── visualize_experiments.py
-├── tests/
-│   ├── test_agent.py
-│   ├── test_calibration.py
-│   ├── test_inference.py
-│   ├── test_runtime.py
-├── MIGRATION_NOTES.md
-├── README.md
-├── pyproject.toml
-├── requirements.txt
-└── .gitignore
-```
+这些模块用于支持基础校准、状态估计和 baseline 验证。
 
 ## 安装
 
@@ -194,14 +76,13 @@ cd photonic-sim
 pip install -e .
 ```
 
-### 方式 2：不安装，直接在仓库目录运行
+### 方式 2：直接在仓库目录运行
 
-当前 `examples/verify_runtime.py` 和 `tests/test_runtime.py` 已经带了本地路径注入，
-所以在仓库根目录下可以直接运行。
+当前仓库里的示例、测试和实验脚本都支持从仓库根目录直接运行。
 
 ## 快速上手
 
-### 1. 创建一个最小 MRR runtime
+### 1. 创建一个最小 runtime
 
 ```python
 import numpy as np
@@ -261,7 +142,7 @@ print(state.thermal_powers_mw)
 print(state.effective_resonances_nm)
 ```
 
-### 3. 读取 PD 观测
+### 3. 读取 PD
 
 ```python
 frame = runtime.read_pd(input_powers_mw=np.ones(3))
@@ -273,7 +154,7 @@ print(frame.payload["quantized_currents_ma"])
 print(frame.metadata)
 ```
 
-### 4. 读取 OSA 观测
+### 4. 读取 OSA
 
 ```python
 from photonic_sim import OSAInstrument, OSAInstrumentConfig
@@ -292,9 +173,9 @@ print(osa.payload["wavelengths_nm"][:5])
 print(osa.payload["spectrum_dbm"][:5])
 ```
 
-## 如何验证当前库
+## 如何验证
 
-### 1. 运行单元测试
+### 1. 运行测试
 
 ```powershell
 cd photonic-sim
@@ -304,12 +185,12 @@ python -m pytest tests -q
 当前测试覆盖：
 
 - actuator / thermal state 需要通过时间推进才生效
-- executor clamp 和 safety warning
-- fixed-range ADC saturation
-- fresh / stale measurement frame 语义
+- executor clamp 与 safety warning
+- stale / fresh frame 语义
+- snapshot / restore / fork 一致性
 - calibration bootstrap 摘要构建
-- task / budget / agent baseline 基本语义
-- belief update 与 recovery trigger 最小链路
+- belief update 与 recovery trigger
+- baseline controller 基本闭环
 
 ### 2. 运行手动验证脚本
 
@@ -317,59 +198,15 @@ python -m pytest tests -q
 python examples/verify_runtime.py
 ```
 
-该脚本会打印 3 类验证结果：
+该脚本会打印：
 
-- `voltage -> power -> thermal state -> shift`
-- `PD / OSA` measurement frame
-- executor clamp 与 safety guard
+- 电压到热状态与共振偏移的变化
+- `PD` / `OSA` 的观测帧内容
+- clamp 与 safety guard 的行为
 
-## 当前主线：Agent 调控
+## 实验脚本
 
-当前主线已经从“继续扩展底层架构”切回到“明确 agent 要解决什么调控任务”。
-
-现有 runtime 已经足够支撑 agent-facing 需求分析：
-
-- 动作入口：`apply_voltage()`
-- 时间推进：`step(dt_ms)`
-- 观测入口：`read_pd()` / `read_osa()`
-- 统一观测语义：`MeasurementFrame`
-- 动作回执：`ActionAck`
-
-当前实验的定位不是长期停留在底层表征，而是为 agent 调控提供：
-
-- thermal / crosstalk 先验
-- 观测链约束
-- 预算与采样频率边界
-- 漂移场景下的离线评估数据
-
-agent 主线规格见：
-
-- [docs/AGENT_CONTROL_SPEC.md](./docs/AGENT_CONTROL_SPEC.md)
-
-## 当前适合做哪些实验
-
-在当前版本上，已经适合做以下实验：
-
-- actuator step response
-- thermal crosstalk sweep
-- drift sensitivity sweep
-- PD / OSA 观测链测试
-- ADC saturation / bitwidth sweep
-- safety threshold stress test
-- calibration 数据采集前的基础动态验证
-
-当前还不适合直接做：
-
-- 完整 calibration-aware retuning 闭环论文主实验
-- probe-driven identity recovery
-- memory / agent / MPC 公平对比
-
-换句话说，这些实验当前更适合作为 agent 主线的前置表征，
-而不是项目的最终研究落点。
-
-## 当前推荐的实验入口
-
-如果你准备先补齐 agent 调控所需的前置数据，推荐按这个顺序运行：
+推荐的基础实验入口：
 
 ```powershell
 python experiments/run_step_response.py
@@ -381,48 +218,66 @@ python experiments/run_agent_retuning_baseline.py
 python experiments/run_belief_recovery_probe.py
 ```
 
-这些脚本对应的实验目标分别是：
+这些脚本分别对应：
 
 - 执行器阶跃响应
 - 热串扰扫描
-- PD / OSA 观测链与 ADC sweep
-- 漂移长时间观测数据生成
-- 生成最小校准摘要供 agent / estimator 初始化使用
-- 在统一 task / budget / observation 语义下跑第一版 agent baseline
-- 观察 belief update 与 recovery trigger 的最小推理链路
+- `PD` / `OSA` 观测链 sweep
+- 漂移数据集生成
+- 校准摘要构建
+- baseline 闭环验证
+- belief / recovery 行为探针
 
-默认输出目录为：
+默认输出目录：
 
 ```text
 experiments/outputs/
 ```
 
-## 和旧版相比最大的变化
+## 目录结构
 
-旧版主要问题是：
+```text
+photonic-sim/
+├── photonic_sim/
+│   ├── __init__.py
+│   ├── agent.py
+│   ├── calibration.py
+│   ├── config.py
+│   ├── controller.py
+│   ├── execution.py
+│   ├── inference.py
+│   ├── instruments.py
+│   ├── physics.py
+│   ├── plant.py
+│   ├── runtime.py
+│   └── types.py
+├── docs/
+├── examples/
+├── experiments/
+├── tests/
+├── MIGRATION_NOTES.md
+├── README.md
+├── pyproject.toml
+└── requirements.txt
+```
 
-- 目标权重直接反解
-- 无显式时间推进
-- 光域 / 电域混在一个 carrier
-- ADC 按当前样本动态缩放
+## 当前边界
 
-新版重构优先修正了这些结构问题。详细说明见：
+当前仓库主要覆盖：
 
-- [MIGRATION_NOTES.md](./MIGRATION_NOTES.md)
+- 底层植物理与仪器语义
+- 时间推进与预算语义
+- 校准摘要与最小推理原语
+- characterization / baseline 实验
 
-## 下一步路线
+当前没有覆盖的内容包括：
 
-建议接下来的实现顺序：
+- 更复杂的多物理场模型
+- 更精细的 OSA 光谱仪器建模
+- 更复杂的热-电网络
+- 上层任务规划、记忆系统和复杂决策策略
 
-1. `Agent Task Spec`
-2. `Budget / Cost Accountant`
-3. `AgentEnv` 与 observation / action contract
-4. `CalibrationState / BeliefState / RecoveryTrigger`
-5. `Task-grade BeliefStateEstimator`
-6. `Observation Planner + Recovery Policy`
-7. `Heuristic / Controller Baseline`
-8. `Agent / Controller Core`
+## 相关文件
 
-也就是说，当前版本已经把“器件-执行器-仪器-runtime”这层打通，
-而下一阶段的主问题不再是继续堆底层细节，
-而是把 agent 调控任务、信息边界、预算约束和评估协议定义清楚。
+- 迁移说明：[`MIGRATION_NOTES.md`](./MIGRATION_NOTES.md)
+- 详细实验说明：[`experiments/README.md`](./experiments/README.md)
