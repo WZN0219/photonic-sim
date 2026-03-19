@@ -173,6 +173,31 @@ print(osa.payload["wavelengths_nm"][:5])
 print(osa.payload["spectrum_dbm"][:5])
 ```
 
+## 可视化示例
+
+如果你希望先看图，再看代码，可以直接运行：
+
+```powershell
+python examples/plot_mrr_visual_overview.py
+```
+
+默认会在下面生成 4 张 PNG：
+
+```text
+examples/outputs/mrr_visual_overview/
+├── resonance_positions.png
+├── through_spectrum.png
+├── crosstalk_matrix.png
+└── crosstalk_profile.png
+```
+
+这些图分别展示：
+
+- MRR 阵列的 base resonance 和 effective resonance
+- 阵列 through 光谱
+- 串扰矩阵热图
+- 单个 ring 向周围 ring 的串扰衰减分布
+
 ## 如何验证
 
 ### 1. 运行测试
