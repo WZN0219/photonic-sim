@@ -201,3 +201,65 @@ def test_runtime_fork_preserves_measurement_cache_and_rng():
     assert osa_live.quality_flag == osa_clone.quality_flag == "fresh"
     assert np.allclose(osa_live.payload["wavelengths_nm"], osa_clone.payload["wavelengths_nm"])
     assert np.allclose(osa_live.payload["spectrum_dbm"], osa_clone.payload["spectrum_dbm"])
+
+
+def test_plant_restore_rebuilds_geometry_from_snapshot():
+    comb1 = build_comb_wavelengths(center_nm=1550.0, fsr_nm=0.73, num_lines=3)
+    comb2 = build_comb_wavelengths(center_nm=1560.0, fsr_nm=0.73, num_lines=3)
+    source = MRRArrayPlant(
+        num_rings=3,
+        comb_wavelengths_nm=comb1,
+        config=MRRPlantConfig(q_factor=5000.0, crosstalk_alpha=0.08, drift_sigma_nm_per_s=0.0),
+        rng=np.random.default_rng(21),
+        action_config=ActionExecutorConfig(slew_rate_v_per_ms=2.0),
+    )
+    source.issue_command(channel=1, target_voltage_v=2.5)
+    source.step(4.0)
+    snapshot = source.snapshot()
+
+    recipient = MRRArrayPlant(
+        num_rings=3,
+        comb_wavelengths_nm=comb2,
+        config=MRRPlantConfig(q_factor=10000.0, crosstalk_alpha=0.2, drift_sigma_nm_per_s=0.0),
+        rng=np.random.default_rng(22),
+        action_config=ActionExecutorConfig(slew_rate_v_per_ms=0.5),
+    )
+    recipient.restore(snapshot)
+
+    assert np.allclose(recipient.comb_wavelengths_nm, source.comb_wavelengths_nm)
+    assert np.allclose(recipient.base_resonances_nm, source.base_resonances_nm)
+    assert np.allclose(recipient.bandwidth_nm, source.bandwidth_nm)
+    assert np.allclose(recipient.hwhm_nm, source.hwhm_nm)
+    assert np.allclose(recipient.crosstalk_matrix, source.crosstalk_matrix)
+    assert np.allclose(recipient.latent_state().effective_resonances_nm, source.latent_state().effective_resonances_nm)
+
+
+def test_stale_frames_preserve_measurement_metadata():
+    comb = build_comb_wavelengths(center_nm=1550.0, fsr_nm=0.73, num_lines=3)
+    plant = MRRArrayPlant(
+        num_rings=3,
+        comb_wavelengths_nm=comb,
+        config=MRRPlantConfig(drift_sigma_nm_per_s=0.0),
+        rng=np.random.default_rng(23),
+    )
+    plant.set_global_temp_shift_nm(plant.config.fsr_nm / 2.0)
+    pd = PDInstrument(
+        PDInstrumentConfig(adc_bits=4, full_scale_current_ma=0.05, frame_period_ms=2.0, noise_sigma=0.0),
+        rng=np.random.default_rng(24),
+    )
+    fresh_pd = pd.sample(plant, input_powers_mw=np.full(3, 10.0))
+    stale_pd = pd.sample(plant, input_powers_mw=np.full(3, 10.0))
+    assert fresh_pd.metadata["saturated"] is True
+    assert stale_pd.metadata["saturated"] is True
+    assert stale_pd.metadata["adc_bits"] == fresh_pd.metadata["adc_bits"]
+    assert stale_pd.metadata["adc_lsb_ma"] == fresh_pd.metadata["adc_lsb_ma"]
+
+    osa = OSAInstrument(
+        OSAInstrumentConfig(step_pm=5.0, span_nm=0.6, frame_period_ms=5.0, amplitude_noise_sigma=0.0),
+        rng=np.random.default_rng(25),
+    )
+    fresh_osa = osa.sample(plant, center_nm=1550.0, span_nm=0.6)
+    stale_osa = osa.sample(plant, center_nm=1550.0, span_nm=0.6)
+    assert stale_osa.metadata["center_nm"] == fresh_osa.metadata["center_nm"]
+    assert stale_osa.metadata["span_nm"] == fresh_osa.metadata["span_nm"]
+    assert stale_osa.metadata["step_pm"] == fresh_osa.metadata["step_pm"]

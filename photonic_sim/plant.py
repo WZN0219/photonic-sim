@@ -129,7 +129,8 @@ class MRRArrayPlant:
     def restore(self, snapshot: PlantSnapshot) -> None:
         if snapshot.num_rings != self.num_rings:
             raise ValueError("snapshot num_rings does not match plant")
-        if snapshot.comb_wavelengths_nm.shape != self.comb_wavelengths_nm.shape:
+        snapshot_comb = np.asarray(snapshot.comb_wavelengths_nm, dtype=float)
+        if snapshot_comb.shape != self.comb_wavelengths_nm.shape:
             raise ValueError("snapshot comb_wavelengths_nm does not match plant")
         self.config = snapshot.config
         self.executor = ActionExecutor(snapshot.action_config)
@@ -139,17 +140,27 @@ class MRRArrayPlant:
         )
         self.rng = np.random.default_rng()
         self.rng.bit_generator.state = copy.deepcopy(snapshot.rng_state)
+        self.comb_wavelengths_nm = snapshot_comb.copy()
+        self.base_resonances_nm = self.comb_wavelengths_nm.copy()
+        self.bandwidth_nm = self.base_resonances_nm / self.config.q_factor
+        self.hwhm_nm = self.bandwidth_nm / 2.0
+        self.min_t = 10 ** (-self.config.extinction_ratio_db / 10.0)
+        self.crosstalk_matrix = build_crosstalk_matrix(
+            self.num_rings,
+            self.config.crosstalk_alpha,
+            self.config.crosstalk_decay_length,
+        )
         self.time_ms = float(snapshot.time_ms)
         self.target_voltages_v = snapshot.target_voltages_v.copy()
         self.actuator_voltages_v = snapshot.actuator_voltages_v.copy()
-        self.command_powers_mw = snapshot.command_powers_mw.copy()
         self.thermal_powers_mw = snapshot.thermal_powers_mw.copy()
         self.drift_nm = snapshot.drift_nm.copy()
         self.global_temp_shift_nm = float(snapshot.global_temp_shift_nm)
-        self.ideal_shifts_nm = snapshot.ideal_shifts_nm.copy()
-        self.effective_resonances_nm = snapshot.effective_resonances_nm.copy()
+        self.command_powers_mw = (
+            (self.actuator_voltages_v ** 2) / self.config.heater_resistance_ohm * 1000.0
+        )
+        self._recompute_latent_state()
         self.self_shift_clamped_mask = snapshot.self_shift_clamped_mask.copy()
-        self.total_shift_warning_mask = snapshot.total_shift_warning_mask.copy()
 
     def fork(self) -> "MRRArrayPlant":
         clone = MRRArrayPlant(

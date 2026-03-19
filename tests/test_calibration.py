@@ -60,10 +60,49 @@ def test_calibration_bootstrap_builds_summary_from_experiment_dir(tmp_path):
 
     _write_csv(
         exp_dir / "observation_chain" / "osa_sweep.csv",
-        ["step_pm", "span_nm", "frame_period_ms", "num_samples", "min_spectrum_dbm", "max_spectrum_dbm", "second_frame_quality"],
         [
-            {"step_pm": 20.0, "span_nm": 0.8, "frame_period_ms": 5.0, "num_samples": 41, "min_spectrum_dbm": -10, "max_spectrum_dbm": -2, "second_frame_quality": "stale"},
-            {"step_pm": 10.0, "span_nm": 0.8, "frame_period_ms": 5.0, "num_samples": 81, "min_spectrum_dbm": -10, "max_spectrum_dbm": -2, "second_frame_quality": "stale"},
+            "step_pm",
+            "span_nm",
+            "frame_period_ms",
+            "array_span_nm",
+            "num_samples",
+            "min_spectrum_dbm",
+            "max_spectrum_dbm",
+            "perturbation_pm",
+            "early_post_step_quality",
+            "fresh_post_step_quality",
+            "fresh_post_step_mean_peak_error_pm",
+            "fresh_post_step_max_peak_error_pm",
+        ],
+        [
+            {
+                "step_pm": 20.0,
+                "span_nm": 2.6,
+                "frame_period_ms": 5.0,
+                "array_span_nm": 2.2,
+                "num_samples": 131,
+                "min_spectrum_dbm": -10,
+                "max_spectrum_dbm": -2,
+                "perturbation_pm": 12.0,
+                "early_post_step_quality": "stale",
+                "fresh_post_step_quality": "fresh",
+                "fresh_post_step_mean_peak_error_pm": 9.0,
+                "fresh_post_step_max_peak_error_pm": 15.0,
+            },
+            {
+                "step_pm": 10.0,
+                "span_nm": 3.0,
+                "frame_period_ms": 2.0,
+                "array_span_nm": 2.2,
+                "num_samples": 301,
+                "min_spectrum_dbm": -10,
+                "max_spectrum_dbm": -2,
+                "perturbation_pm": 12.0,
+                "early_post_step_quality": "stale",
+                "fresh_post_step_quality": "fresh",
+                "fresh_post_step_mean_peak_error_pm": 3.0,
+                "fresh_post_step_max_peak_error_pm": 5.0,
+            },
         ],
     )
 
@@ -104,6 +143,7 @@ def test_calibration_bootstrap_builds_summary_from_experiment_dir(tmp_path):
     assert round(result.crosstalk.relative_profile_by_offset[0], 6) == 1.0
     assert result.observation.recommended_pd_config["adc_bits"] == 8
     assert result.observation.recommended_osa_config["step_pm"] == 10.0
+    assert result.observation.recommended_osa_config["fresh_post_step_quality"] == "fresh"
     assert round(result.drift.pd_frame_period_ms, 6) == 5.0
     assert round(result.drift.osa_frame_period_ms, 6) == 10.0
 

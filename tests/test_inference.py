@@ -165,6 +165,7 @@ def test_simple_belief_estimator_updates_from_fresh_osa_and_then_grows_uncertain
     )
 
     belief_0 = estimator.initialize(env.observation(), calibration_state)
+    assert np.all(np.isnan(belief_0.resonance_estimates_nm))
     assert round(float(np.max(belief_0.resonance_uncertainty_pm)), 6) == 100.0
 
     osa_step = env.step(
@@ -177,6 +178,7 @@ def test_simple_belief_estimator_updates_from_fresh_osa_and_then_grows_uncertain
     belief_1 = estimator.update(belief_0, osa_step.observation, calibration_state)
     actual_resonances_nm = env.runtime.plant.latent_state().effective_resonances_nm
     assert float(np.max(np.abs(belief_1.resonance_estimates_nm - actual_resonances_nm)) * 1000.0) <= 5.0
+    assert float(np.max(np.abs(belief_1.innovation_pm))) == 0.0
     assert round(float(np.max(belief_1.resonance_uncertainty_pm)), 6) <= 7.0
 
     wait_step = env.step({"type": "wait", "dt_ms": 10.0})

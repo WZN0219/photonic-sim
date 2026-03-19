@@ -88,6 +88,7 @@ class BudgetAccountantSnapshot:
 
 @dataclass
 class AgentEnvSnapshot:
+    task_spec: Any
     runtime_snapshot: RuntimeSnapshot
     accountant_snapshot: BudgetAccountantSnapshot
     episode_log: list[dict[str, Any]]

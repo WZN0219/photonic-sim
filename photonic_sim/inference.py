@@ -196,11 +196,14 @@ class SimpleBeliefStateEstimator:
         num_rings = observation.task_spec.target_resonances_nm.shape[0]
         prior_belief = BeliefState(
             time_ms=observation.time_ms,
-            resonance_estimates_nm=observation.task_spec.target_resonances_nm.copy(),
+            resonance_estimates_nm=np.full(num_rings, np.nan),
             resonance_uncertainty_pm=np.full(num_rings, self.config.initial_uncertainty_pm),
             identity_confidence=np.full(num_rings, calibration_state.confidence),
             calibration_confidence=calibration_state.confidence,
-            metadata={"source": "prior"},
+            metadata={
+                "source": "uninformed_prior",
+                "goal_resonances_nm": observation.task_spec.target_resonances_nm.copy(),
+            },
         )
         return self.update(prior_belief, observation, calibration_state)
 
@@ -229,8 +232,9 @@ class SimpleBeliefStateEstimator:
         last_observed_resonances_nm = (
             None if previous_belief.last_observed_resonances_nm is None else previous_belief.last_observed_resonances_nm.copy()
         )
-        innovation_pm = np.zeros_like(estimates_nm)
-        metadata = {"source": "propagated"}
+        innovation_pm = None if not np.all(np.isfinite(estimates_nm)) else np.zeros_like(estimates_nm)
+        metadata = previous_belief.metadata.copy()
+        metadata["source"] = "propagated"
 
         osa_frame = observation.latest_osa_frame
         osa_measurement_timestamp_ms = measurement_source_timestamp_ms(osa_frame)
@@ -247,7 +251,11 @@ class SimpleBeliefStateEstimator:
                 reference_resonances_nm=reference_resonances_nm,
                 local_window_nm=self.config.osa_local_window_nm,
             )
-            innovation_pm = (measured_resonances_nm - estimates_nm) * 1000.0
+            if np.all(np.isfinite(estimates_nm)):
+                innovation_pm = (measured_resonances_nm - estimates_nm) * 1000.0
+            else:
+                innovation_pm = np.zeros_like(measured_resonances_nm)
+                metadata["innovation_source"] = "measurement_bootstrap"
             estimates_nm = measured_resonances_nm
             base_uncertainty_pm = (
                 self.config.fresh_osa_uncertainty_pm
@@ -344,11 +352,12 @@ class RecoveryTrigger:
         calibration_confidence = calibration_state.confidence
         if belief_state is not None:
             calibration_confidence = min(calibration_confidence, belief_state.calibration_confidence)
-            if belief_state.innovation_pm is not None:
-                max_innovation_pm = float(np.max(np.abs(belief_state.innovation_pm)))
+            if belief_state.innovation_pm is not None and np.any(np.isfinite(belief_state.innovation_pm)):
+                max_innovation_pm = float(np.nanmax(np.abs(belief_state.innovation_pm)))
                 belief_divergence = max_innovation_pm >= self.config.belief_divergence_threshold_pm
-            if belief_state.resonance_estimates_nm.shape[0] > 1:
-                sorted_estimates_nm = np.sort(belief_state.resonance_estimates_nm)
+            finite_estimates_nm = belief_state.resonance_estimates_nm[np.isfinite(belief_state.resonance_estimates_nm)]
+            if finite_estimates_nm.shape[0] > 1:
+                sorted_estimates_nm = np.sort(finite_estimates_nm)
                 min_spacing_pm = float(np.min(np.diff(sorted_estimates_nm)) * 1000.0)
                 collision_suspected = min_spacing_pm <= self.config.collision_margin_pm
 

@@ -182,6 +182,17 @@ class CalibrationBootstrap:
         recommended_pd = max(pd_rows, key=pd_score)
 
         def osa_score(row: dict):
+            if "fresh_post_step_mean_peak_error_pm" in row:
+                fresh_quality = row.get("fresh_post_step_quality", "")
+                early_quality = row.get("early_post_step_quality", "")
+                return (
+                    int(fresh_quality == "fresh"),
+                    int(early_quality == "stale"),
+                    -_safe_float(row["fresh_post_step_mean_peak_error_pm"]),
+                    -_safe_float(row["fresh_post_step_max_peak_error_pm"]),
+                    -_safe_float(row["frame_period_ms"]),
+                    -_safe_float(row["num_samples"]),
+                )
             num_samples = _safe_float(row["num_samples"])
             frame_period = _safe_float(row["frame_period_ms"])
             info_rate = num_samples / frame_period if frame_period > 0 else 0.0
@@ -201,12 +212,38 @@ class CalibrationBootstrap:
         osa_summary = {
             "total_rows": len(osa_rows),
             "num_stale_second_frame_rows": sum(
-                1 for row in osa_rows if row["second_frame_quality"] == "stale"
+                1
+                for row in osa_rows
+                if row.get("second_frame_quality") == "stale"
+                or row.get("early_post_step_quality") == "stale"
+            ),
+            "num_fresh_post_step_rows": sum(
+                1 for row in osa_rows if row.get("fresh_post_step_quality") == "fresh"
             ),
             "unique_num_samples": sorted(
                 {int(_safe_float(row["num_samples"])) for row in osa_rows}
             ),
         }
+
+        recommended_osa_config = {
+            "step_pm": _safe_float(recommended_osa["step_pm"]),
+            "span_nm": _safe_float(recommended_osa["span_nm"]),
+            "frame_period_ms": _safe_float(recommended_osa["frame_period_ms"]),
+            "num_samples": int(_safe_float(recommended_osa["num_samples"])),
+        }
+        if "fresh_post_step_quality" in recommended_osa:
+            recommended_osa_config.update(
+                {
+                    "fresh_post_step_quality": recommended_osa["fresh_post_step_quality"],
+                    "early_post_step_quality": recommended_osa["early_post_step_quality"],
+                    "fresh_post_step_mean_peak_error_pm": _safe_float(
+                        recommended_osa["fresh_post_step_mean_peak_error_pm"]
+                    ),
+                    "fresh_post_step_max_peak_error_pm": _safe_float(
+                        recommended_osa["fresh_post_step_max_peak_error_pm"]
+                    ),
+                }
+            )
 
         return ObservationCalibration(
             recommended_pd_config={
@@ -217,12 +254,7 @@ class CalibrationBootstrap:
                 "saturated": recommended_pd["saturated"] == "True",
                 "adc_lsb_ma": _safe_float(recommended_pd["adc_lsb_ma"]),
             },
-            recommended_osa_config={
-                "step_pm": _safe_float(recommended_osa["step_pm"]),
-                "span_nm": _safe_float(recommended_osa["span_nm"]),
-                "frame_period_ms": _safe_float(recommended_osa["frame_period_ms"]),
-                "num_samples": int(_safe_float(recommended_osa["num_samples"])),
-            },
+            recommended_osa_config=recommended_osa_config,
             pd_summary=pd_summary,
             osa_summary=osa_summary,
         )

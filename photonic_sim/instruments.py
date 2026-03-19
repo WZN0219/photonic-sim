@@ -58,17 +58,21 @@ class PDInstrument:
                wavelengths_nm: Optional[np.ndarray] = None) -> MeasurementFrame:
         now_ms = plant.time_ms
         if self._last_frame is not None and now_ms - self._last_frame.timestamp_ms < self.config.frame_period_ms:
+            stale_frame = _clone_frame(self._last_frame)
+            stale_metadata = stale_frame.metadata
+            stale_metadata.update(
+                {
+                    "source_timestamp_ms": self._last_frame.timestamp_ms,
+                    "frame_period_ms": self.config.frame_period_ms,
+                }
+            )
             return MeasurementFrame(
                 instrument_type="PD",
                 timestamp_ms=now_ms,
                 calib_version=self.config.calib_version,
                 quality_flag="stale",
-                payload={k: np.array(v, copy=True) if isinstance(v, np.ndarray) else v
-                         for k, v in self._last_frame.payload.items()},
-                metadata={
-                    "source_timestamp_ms": self._last_frame.timestamp_ms,
-                    "frame_period_ms": self.config.frame_period_ms,
-                },
+                payload=stale_frame.payload,
+                metadata=stale_metadata,
             )
 
         wavelengths = plant.comb_wavelengths_nm if wavelengths_nm is None else np.asarray(wavelengths_nm, dtype=float)
@@ -146,17 +150,21 @@ class OSAInstrument:
                span_nm: Optional[float] = None) -> MeasurementFrame:
         now_ms = plant.time_ms
         if self._last_frame is not None and now_ms - self._last_frame.timestamp_ms < self.config.frame_period_ms:
+            stale_frame = _clone_frame(self._last_frame)
+            stale_metadata = stale_frame.metadata
+            stale_metadata.update(
+                {
+                    "source_timestamp_ms": self._last_frame.timestamp_ms,
+                    "frame_period_ms": self.config.frame_period_ms,
+                }
+            )
             return MeasurementFrame(
                 instrument_type="OSA",
                 timestamp_ms=now_ms,
                 calib_version=self.config.calib_version,
                 quality_flag="stale",
-                payload={k: np.array(v, copy=True) if isinstance(v, np.ndarray) else v
-                         for k, v in self._last_frame.payload.items()},
-                metadata={
-                    "source_timestamp_ms": self._last_frame.timestamp_ms,
-                    "frame_period_ms": self.config.frame_period_ms,
-                },
+                payload=stale_frame.payload,
+                metadata=stale_metadata,
             )
 
         center_nm = float(center_nm if center_nm is not None else np.mean(plant.base_resonances_nm))

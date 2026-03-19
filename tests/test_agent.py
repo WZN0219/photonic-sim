@@ -273,3 +273,30 @@ def test_agent_env_fork_preserves_rollout_exactly():
             env.runtime.plant.latent_state().effective_resonances_nm,
             clone.runtime.plant.latent_state().effective_resonances_nm,
         )
+
+
+def test_agent_env_restore_replaces_task_spec_from_snapshot():
+    runtime_factory = _build_runtime_factory(num_rings=1)
+    source_target = simulate_target_resonances(
+        runtime_factory=runtime_factory,
+        target_voltages_v=np.array([1.5]),
+        settle_ms=0.0,
+    )
+    env = AgentEnv(
+        runtime_factory=runtime_factory,
+        task_spec=TaskSpec(target_resonances_nm=source_target, allowed_instruments=("OSA",)),
+        budget_config=BudgetConfig(),
+    )
+    env.reset(initial_voltages_v=np.array([0.0]), settle_ms=0.0)
+    snapshot = env.snapshot()
+
+    wrong_target = np.array([1600.0], dtype=float)
+    restored = AgentEnv(
+        runtime_factory=runtime_factory,
+        task_spec=TaskSpec(target_resonances_nm=wrong_target, allowed_instruments=("OSA",)),
+        budget_config=BudgetConfig(),
+    )
+    restored.restore(snapshot)
+
+    assert np.allclose(restored.task_spec.target_resonances_nm, source_target)
+    assert restored.episode_summary()["final_max_abs_error_pm"] == env.episode_summary()["final_max_abs_error_pm"]

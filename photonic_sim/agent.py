@@ -270,10 +270,24 @@ class AgentEnv:
         self._previous_mean_abs_error_pm = self._alignment_metrics()["mean_abs_error_pm"]
         return self._build_observation()
 
+    @staticmethod
+    def _clone_task_spec(task_spec: TaskSpec) -> TaskSpec:
+        return TaskSpec(
+            target_resonances_nm=np.asarray(task_spec.target_resonances_nm, dtype=float).copy(),
+            tolerance_pm=float(task_spec.tolerance_pm),
+            max_episode_time_ms=float(task_spec.max_episode_time_ms),
+            max_control_steps=int(task_spec.max_control_steps),
+            success_hold_steps=int(task_spec.success_hold_steps),
+            action_budget=float(task_spec.action_budget),
+            observation_budget=float(task_spec.observation_budget),
+            allowed_instruments=tuple(task_spec.allowed_instruments),
+        )
+
     def snapshot(self) -> AgentEnvSnapshot:
         if self.runtime is None:
             raise RuntimeError("reset() must be called before snapshot()")
         return AgentEnvSnapshot(
+            task_spec=self._clone_task_spec(self.task_spec),
             runtime_snapshot=self.runtime.snapshot(),
             accountant_snapshot=self.accountant.snapshot_state(),
             episode_log=copy.deepcopy(self.episode_log),
@@ -292,6 +306,7 @@ class AgentEnv:
     def restore(self, snapshot: AgentEnvSnapshot) -> None:
         if self.runtime is None:
             self.runtime = self.runtime_factory()
+        self.task_spec = self._clone_task_spec(snapshot.task_spec)
         self.runtime.restore(snapshot.runtime_snapshot)
         self.accountant.restore_state(snapshot.accountant_snapshot)
         self.episode_log = copy.deepcopy(snapshot.episode_log)
