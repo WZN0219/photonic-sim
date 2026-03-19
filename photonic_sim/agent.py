@@ -1,10 +1,11 @@
+import copy
 from dataclasses import dataclass
 from typing import Any, Callable, Optional
 
 import numpy as np
 
 from .runtime import SimulationRuntime
-from .types import ActionAck, MeasurementFrame
+from .types import ActionAck, AgentEnvSnapshot, BudgetAccountantSnapshot, MeasurementFrame
 
 
 @dataclass(frozen=True)
@@ -59,6 +60,7 @@ class BudgetSnapshot:
     num_clamped_actions: int
     num_saturated_measurements: int
     num_safety_warnings: int
+    num_safety_warning_active_steps: int
 
 
 class BudgetAccountant:
@@ -66,7 +68,7 @@ class BudgetAccountant:
         self.config = config or BudgetConfig()
         self.reset()
 
-    def reset(self) -> None:
+    def reset(self, initial_warning_mask: Optional[np.ndarray] = None) -> None:
         self.action_budget_used = 0.0
         self.observation_budget_used = 0.0
         self.num_voltage_commands = 0
@@ -76,6 +78,11 @@ class BudgetAccountant:
         self.num_clamped_actions = 0
         self.num_saturated_measurements = 0
         self.num_safety_warnings = 0
+        self.num_safety_warning_active_steps = 0
+        if initial_warning_mask is None:
+            self._previous_warning_mask = None
+        else:
+            self._previous_warning_mask = np.asarray(initial_warning_mask, dtype=bool).copy()
 
     def charge_voltage(self, ack: ActionAck) -> tuple[float, float]:
         self.action_budget_used += self.config.voltage_action_cost
@@ -107,8 +114,16 @@ class BudgetAccountant:
         return self.config.osa_read_cost, 0.0
 
     def charge_safety(self, warning_mask: np.ndarray) -> float:
-        num_new_warnings = int(np.count_nonzero(warning_mask))
+        warning_mask = np.asarray(warning_mask, dtype=bool)
+        if np.any(warning_mask):
+            self.num_safety_warning_active_steps += 1
+        if self._previous_warning_mask is None:
+            new_warning_mask = warning_mask
+        else:
+            new_warning_mask = warning_mask & ~self._previous_warning_mask
+        num_new_warnings = int(np.count_nonzero(new_warning_mask))
         self.num_safety_warnings += num_new_warnings
+        self._previous_warning_mask = warning_mask.copy()
         return num_new_warnings * self.config.safety_warning_cost
 
     def snapshot(self, task_spec: TaskSpec) -> BudgetSnapshot:
@@ -127,6 +142,7 @@ class BudgetAccountant:
             num_clamped_actions=self.num_clamped_actions,
             num_saturated_measurements=self.num_saturated_measurements,
             num_safety_warnings=self.num_safety_warnings,
+            num_safety_warning_active_steps=self.num_safety_warning_active_steps,
         )
 
     def exceeded_reason(self, task_spec: TaskSpec) -> Optional[str]:
@@ -135,6 +151,35 @@ class BudgetAccountant:
         if self.observation_budget_used > task_spec.observation_budget:
             return "observation_budget_exceeded"
         return None
+
+    def snapshot_state(self) -> BudgetAccountantSnapshot:
+        previous_warning_mask = None if self._previous_warning_mask is None else self._previous_warning_mask.copy()
+        return BudgetAccountantSnapshot(
+            action_budget_used=float(self.action_budget_used),
+            observation_budget_used=float(self.observation_budget_used),
+            num_voltage_commands=self.num_voltage_commands,
+            num_wait_actions=self.num_wait_actions,
+            num_pd_reads=self.num_pd_reads,
+            num_osa_reads=self.num_osa_reads,
+            num_clamped_actions=self.num_clamped_actions,
+            num_saturated_measurements=self.num_saturated_measurements,
+            num_safety_warnings=self.num_safety_warnings,
+            num_safety_warning_active_steps=self.num_safety_warning_active_steps,
+            previous_warning_mask=previous_warning_mask,
+        )
+
+    def restore_state(self, snapshot: BudgetAccountantSnapshot) -> None:
+        self.action_budget_used = float(snapshot.action_budget_used)
+        self.observation_budget_used = float(snapshot.observation_budget_used)
+        self.num_voltage_commands = int(snapshot.num_voltage_commands)
+        self.num_wait_actions = int(snapshot.num_wait_actions)
+        self.num_pd_reads = int(snapshot.num_pd_reads)
+        self.num_osa_reads = int(snapshot.num_osa_reads)
+        self.num_clamped_actions = int(snapshot.num_clamped_actions)
+        self.num_saturated_measurements = int(snapshot.num_saturated_measurements)
+        self.num_safety_warnings = int(snapshot.num_safety_warnings)
+        self.num_safety_warning_active_steps = int(snapshot.num_safety_warning_active_steps)
+        self._previous_warning_mask = None if snapshot.previous_warning_mask is None else snapshot.previous_warning_mask.copy()
 
 
 @dataclass
@@ -188,6 +233,7 @@ class AgentEnv:
         initial_voltages_v: Optional[np.ndarray] = None,
         settle_ms: float = 0.0,
         global_temp_shift_nm: float = 0.0,
+        per_ring_static_shift_nm: Optional[np.ndarray] = None,
     ) -> AgentObservation:
         self.runtime = self.runtime_factory()
         if self.task_spec.target_resonances_nm.shape[0] != self.runtime.plant.num_rings:
@@ -206,7 +252,11 @@ class AgentEnv:
         if settle_ms > 0.0:
             self.runtime.step(float(settle_ms))
 
-        self.accountant.reset()
+        if per_ring_static_shift_nm is not None:
+            self.runtime.plant.set_per_ring_static_shift_nm(np.asarray(per_ring_static_shift_nm, dtype=float))
+
+        initial_warning_mask = self.runtime.plant.latent_state().total_shift_warning_mask
+        self.accountant.reset(initial_warning_mask=initial_warning_mask)
         self.episode_log = []
         self._episode_start_ms = self.runtime.plant.time_ms
         self._step_index = 0
@@ -219,6 +269,51 @@ class AgentEnv:
         self._latest_osa_frame = None
         self._previous_mean_abs_error_pm = self._alignment_metrics()["mean_abs_error_pm"]
         return self._build_observation()
+
+    def snapshot(self) -> AgentEnvSnapshot:
+        if self.runtime is None:
+            raise RuntimeError("reset() must be called before snapshot()")
+        return AgentEnvSnapshot(
+            runtime_snapshot=self.runtime.snapshot(),
+            accountant_snapshot=self.accountant.snapshot_state(),
+            episode_log=copy.deepcopy(self.episode_log),
+            episode_start_ms=float(self._episode_start_ms),
+            step_index=int(self._step_index),
+            success_streak=int(self._success_streak),
+            previous_mean_abs_error_pm=float(self._previous_mean_abs_error_pm),
+            done=bool(self._done),
+            done_reason=str(self._done_reason),
+            last_action=None if self._last_action is None else copy.deepcopy(self._last_action),
+            last_ack=None if self._last_ack is None else copy.deepcopy(self._last_ack),
+            latest_pd_frame=None if self._latest_pd_frame is None else copy.deepcopy(self._latest_pd_frame),
+            latest_osa_frame=None if self._latest_osa_frame is None else copy.deepcopy(self._latest_osa_frame),
+        )
+
+    def restore(self, snapshot: AgentEnvSnapshot) -> None:
+        if self.runtime is None:
+            self.runtime = self.runtime_factory()
+        self.runtime.restore(snapshot.runtime_snapshot)
+        self.accountant.restore_state(snapshot.accountant_snapshot)
+        self.episode_log = copy.deepcopy(snapshot.episode_log)
+        self._episode_start_ms = float(snapshot.episode_start_ms)
+        self._step_index = int(snapshot.step_index)
+        self._success_streak = int(snapshot.success_streak)
+        self._previous_mean_abs_error_pm = float(snapshot.previous_mean_abs_error_pm)
+        self._done = bool(snapshot.done)
+        self._done_reason = str(snapshot.done_reason)
+        self._last_action = None if snapshot.last_action is None else copy.deepcopy(snapshot.last_action)
+        self._last_ack = None if snapshot.last_ack is None else copy.deepcopy(snapshot.last_ack)
+        self._latest_pd_frame = None if snapshot.latest_pd_frame is None else copy.deepcopy(snapshot.latest_pd_frame)
+        self._latest_osa_frame = None if snapshot.latest_osa_frame is None else copy.deepcopy(snapshot.latest_osa_frame)
+
+    def fork(self) -> "AgentEnv":
+        clone = AgentEnv(
+            runtime_factory=self.runtime_factory,
+            task_spec=self.task_spec,
+            budget_config=self.accountant.config,
+        )
+        clone.restore(self.snapshot())
+        return clone
 
     def step(self, action: dict[str, Any]) -> AgentStepResult:
         if self.runtime is None:
@@ -324,6 +419,7 @@ class AgentEnv:
                 "num_clamped_actions": observation.budget_state.num_clamped_actions,
                 "num_saturated_measurements": observation.budget_state.num_saturated_measurements,
                 "num_safety_warnings": observation.budget_state.num_safety_warnings,
+                "num_safety_warning_active_steps": observation.budget_state.num_safety_warning_active_steps,
             }
         )
 
@@ -355,6 +451,7 @@ class AgentEnv:
             "num_clamped_actions": budget.num_clamped_actions,
             "num_saturated_measurements": budget.num_saturated_measurements,
             "num_safety_warnings": budget.num_safety_warnings,
+            "num_safety_warning_active_steps": budget.num_safety_warning_active_steps,
             "decision_steps": self._step_index,
         }
 

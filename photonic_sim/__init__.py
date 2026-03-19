@@ -34,13 +34,14 @@ from .inference import (
     measurement_source_timestamp_ms,
 )
 from .physics import build_comb_wavelengths
-from .types import ActionAck, LatentPlantState, MeasurementFrame
+from .types import ActionAck, AgentEnvSnapshot, BudgetAccountantSnapshot, LatentPlantState, MeasurementFrame, PlantSnapshot, RuntimeSnapshot
 from .plant import MRRArrayPlant
 from .instruments import OSAInstrument, PDInstrument
 from .runtime import SimulationRuntime
 
 __all__ = [
     "ActionAck",
+    "AgentEnvSnapshot",
     "ActionExecutor",
     "ActionExecutorConfig",
     "AgentEnv",
@@ -51,6 +52,7 @@ __all__ = [
     "BootstrapRetuningController",
     "BootstrapRetuningControllerConfig",
     "BudgetAccountant",
+    "BudgetAccountantSnapshot",
     "BudgetConfig",
     "BudgetSnapshot",
     "CalibrationBootstrap",
@@ -63,6 +65,7 @@ __all__ = [
     "OSAInstrumentConfig",
     "PDInstrument",
     "PDInstrumentConfig",
+    "PlantSnapshot",
     "MRRArrayPlant",
     "RecoveryConfig",
     "RecoveryDecision",
@@ -70,6 +73,7 @@ __all__ = [
     "SafetyGuard",
     "SafetyGuardConfig",
     "SimulationRuntime",
+    "RuntimeSnapshot",
     "SimpleBeliefStateEstimator",
     "SimpleBeliefStateEstimatorConfig",
     "TaskSpec",

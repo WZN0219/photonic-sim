@@ -1,3 +1,4 @@
+import copy
 from typing import Optional
 
 import numpy as np
@@ -13,7 +14,7 @@ from .physics import (
     fold_detuning,
     lorentzian_transmission,
 )
-from .types import ActionAck, LatentPlantState
+from .types import ActionAck, LatentPlantState, PlantSnapshot
 
 
 class MRRArrayPlant:
@@ -57,6 +58,110 @@ class MRRArrayPlant:
         self.effective_resonances_nm = self.base_resonances_nm.copy()
         self.self_shift_clamped_mask = np.zeros(num_rings, dtype=bool)
         self.total_shift_warning_mask = np.zeros(num_rings, dtype=bool)
+
+    def set_per_ring_static_shift_nm(self, shift_nm: np.ndarray) -> None:
+        shift_nm = np.asarray(shift_nm, dtype=float)
+        if shift_nm.shape != (self.num_rings,):
+            raise ValueError("shift_nm must match plant num_rings")
+        self.drift_nm = shift_nm.copy()
+        self._recompute_latent_state()
+
+    def initialize_state(
+        self,
+        *,
+        time_ms: Optional[float] = None,
+        target_voltages_v: Optional[np.ndarray] = None,
+        actuator_voltages_v: Optional[np.ndarray] = None,
+        thermal_powers_mw: Optional[np.ndarray] = None,
+        per_ring_static_shift_nm: Optional[np.ndarray] = None,
+        global_temp_shift_nm: Optional[float] = None,
+    ) -> None:
+        if time_ms is not None:
+            self.time_ms = float(time_ms)
+        if target_voltages_v is not None:
+            target_voltages_v = np.asarray(target_voltages_v, dtype=float)
+            if target_voltages_v.shape != (self.num_rings,):
+                raise ValueError("target_voltages_v must match plant num_rings")
+            self.target_voltages_v = target_voltages_v.copy()
+        if actuator_voltages_v is not None:
+            actuator_voltages_v = np.asarray(actuator_voltages_v, dtype=float)
+            if actuator_voltages_v.shape != (self.num_rings,):
+                raise ValueError("actuator_voltages_v must match plant num_rings")
+            self.actuator_voltages_v = actuator_voltages_v.copy()
+        if thermal_powers_mw is not None:
+            thermal_powers_mw = np.asarray(thermal_powers_mw, dtype=float)
+            if thermal_powers_mw.shape != (self.num_rings,):
+                raise ValueError("thermal_powers_mw must match plant num_rings")
+            self.thermal_powers_mw = thermal_powers_mw.copy()
+        if per_ring_static_shift_nm is not None:
+            per_ring_static_shift_nm = np.asarray(per_ring_static_shift_nm, dtype=float)
+            if per_ring_static_shift_nm.shape != (self.num_rings,):
+                raise ValueError("per_ring_static_shift_nm must match plant num_rings")
+            self.drift_nm = per_ring_static_shift_nm.copy()
+        if global_temp_shift_nm is not None:
+            self.global_temp_shift_nm = float(global_temp_shift_nm)
+        self.command_powers_mw = (
+            (self.actuator_voltages_v ** 2) / self.config.heater_resistance_ohm * 1000.0
+        )
+        self._recompute_latent_state()
+
+    def snapshot(self) -> PlantSnapshot:
+        return PlantSnapshot(
+            num_rings=self.num_rings,
+            comb_wavelengths_nm=self.comb_wavelengths_nm.copy(),
+            config=self.config,
+            action_config=self.executor.config,
+            safety_config=self.safety.config,
+            rng_state=copy.deepcopy(self.rng.bit_generator.state),
+            time_ms=self.time_ms,
+            target_voltages_v=self.target_voltages_v.copy(),
+            actuator_voltages_v=self.actuator_voltages_v.copy(),
+            command_powers_mw=self.command_powers_mw.copy(),
+            thermal_powers_mw=self.thermal_powers_mw.copy(),
+            drift_nm=self.drift_nm.copy(),
+            global_temp_shift_nm=self.global_temp_shift_nm,
+            ideal_shifts_nm=self.ideal_shifts_nm.copy(),
+            effective_resonances_nm=self.effective_resonances_nm.copy(),
+            self_shift_clamped_mask=self.self_shift_clamped_mask.copy(),
+            total_shift_warning_mask=self.total_shift_warning_mask.copy(),
+        )
+
+    def restore(self, snapshot: PlantSnapshot) -> None:
+        if snapshot.num_rings != self.num_rings:
+            raise ValueError("snapshot num_rings does not match plant")
+        if snapshot.comb_wavelengths_nm.shape != self.comb_wavelengths_nm.shape:
+            raise ValueError("snapshot comb_wavelengths_nm does not match plant")
+        self.config = snapshot.config
+        self.executor = ActionExecutor(snapshot.action_config)
+        self.safety = SafetyGuard(
+            snapshot.safety_config,
+            tuning_efficiency_nm_per_mw=self.config.tuning_efficiency_nm_per_mw,
+        )
+        self.rng = np.random.default_rng()
+        self.rng.bit_generator.state = copy.deepcopy(snapshot.rng_state)
+        self.time_ms = float(snapshot.time_ms)
+        self.target_voltages_v = snapshot.target_voltages_v.copy()
+        self.actuator_voltages_v = snapshot.actuator_voltages_v.copy()
+        self.command_powers_mw = snapshot.command_powers_mw.copy()
+        self.thermal_powers_mw = snapshot.thermal_powers_mw.copy()
+        self.drift_nm = snapshot.drift_nm.copy()
+        self.global_temp_shift_nm = float(snapshot.global_temp_shift_nm)
+        self.ideal_shifts_nm = snapshot.ideal_shifts_nm.copy()
+        self.effective_resonances_nm = snapshot.effective_resonances_nm.copy()
+        self.self_shift_clamped_mask = snapshot.self_shift_clamped_mask.copy()
+        self.total_shift_warning_mask = snapshot.total_shift_warning_mask.copy()
+
+    def fork(self) -> "MRRArrayPlant":
+        clone = MRRArrayPlant(
+            num_rings=self.num_rings,
+            comb_wavelengths_nm=self.comb_wavelengths_nm.copy(),
+            config=self.config,
+            rng=np.random.default_rng(),
+            action_config=self.executor.config,
+            safety_config=self.safety.config,
+        )
+        clone.restore(self.snapshot())
+        return clone
 
     def issue_command(self, channel: int, target_voltage_v: float) -> ActionAck:
         if channel < 0 or channel >= self.num_rings:

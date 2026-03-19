@@ -1,3 +1,4 @@
+import copy
 from typing import Optional
 
 import numpy as np
@@ -7,12 +8,51 @@ from .physics import adc_quantize_unipolar
 from .types import MeasurementFrame
 
 
+def _clone_frame(frame: Optional[MeasurementFrame]) -> Optional[MeasurementFrame]:
+    if frame is None:
+        return None
+    payload = {
+        key: np.array(value, copy=True) if isinstance(value, np.ndarray) else copy.deepcopy(value)
+        for key, value in frame.payload.items()
+    }
+    metadata = {
+        key: np.array(value, copy=True) if isinstance(value, np.ndarray) else copy.deepcopy(value)
+        for key, value in frame.metadata.items()
+    }
+    return MeasurementFrame(
+        instrument_type=frame.instrument_type,
+        timestamp_ms=frame.timestamp_ms,
+        calib_version=frame.calib_version,
+        quality_flag=frame.quality_flag,
+        payload=payload,
+        metadata=metadata,
+    )
+
+
 class PDInstrument:
     def __init__(self, config: Optional[PDInstrumentConfig] = None,
                  rng: Optional[np.random.Generator] = None):
         self.config = config or PDInstrumentConfig()
         self.rng = rng or np.random.default_rng()
         self._last_frame: Optional[MeasurementFrame] = None
+
+    def snapshot(self) -> dict:
+        return {
+            "config": self.config,
+            "rng_state": copy.deepcopy(self.rng.bit_generator.state),
+            "last_frame": _clone_frame(self._last_frame),
+        }
+
+    def restore(self, snapshot: dict) -> None:
+        self.config = snapshot["config"]
+        self.rng = np.random.default_rng()
+        self.rng.bit_generator.state = copy.deepcopy(snapshot["rng_state"])
+        self._last_frame = _clone_frame(snapshot["last_frame"])
+
+    def fork(self) -> "PDInstrument":
+        clone = PDInstrument(config=self.config, rng=np.random.default_rng())
+        clone.restore(self.snapshot())
+        return clone
 
     def sample(self, plant, input_powers_mw: Optional[np.ndarray] = None,
                wavelengths_nm: Optional[np.ndarray] = None) -> MeasurementFrame:
@@ -83,6 +123,24 @@ class OSAInstrument:
         self.config = config or OSAInstrumentConfig()
         self.rng = rng or np.random.default_rng()
         self._last_frame: Optional[MeasurementFrame] = None
+
+    def snapshot(self) -> dict:
+        return {
+            "config": self.config,
+            "rng_state": copy.deepcopy(self.rng.bit_generator.state),
+            "last_frame": _clone_frame(self._last_frame),
+        }
+
+    def restore(self, snapshot: dict) -> None:
+        self.config = snapshot["config"]
+        self.rng = np.random.default_rng()
+        self.rng.bit_generator.state = copy.deepcopy(snapshot["rng_state"])
+        self._last_frame = _clone_frame(snapshot["last_frame"])
+
+    def fork(self) -> "OSAInstrument":
+        clone = OSAInstrument(config=self.config, rng=np.random.default_rng())
+        clone.restore(self.snapshot())
+        return clone
 
     def sample(self, plant, center_nm: Optional[float] = None,
                span_nm: Optional[float] = None) -> MeasurementFrame:

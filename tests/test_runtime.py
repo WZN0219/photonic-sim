@@ -131,3 +131,73 @@ def test_runtime_returns_timestamped_fresh_and_stale_frames():
     assert osa_frame.instrument_type == "OSA"
     assert "wavelengths_nm" in osa_frame.payload
     assert osa_frame.calib_version == "osa-v1"
+
+
+def test_plant_snapshot_restore_preserves_future_evolution():
+    comb = build_comb_wavelengths(center_nm=1550.0, fsr_nm=0.73, num_lines=3)
+    plant = MRRArrayPlant(
+        num_rings=3,
+        comb_wavelengths_nm=comb,
+        config=MRRPlantConfig(thermal_tau_ms=7.0, drift_sigma_nm_per_s=0.003),
+        rng=np.random.default_rng(11),
+        action_config=ActionExecutorConfig(slew_rate_v_per_ms=2.0),
+    )
+    plant.issue_command(channel=1, target_voltage_v=2.5)
+    plant.step(3.0)
+    snapshot = plant.snapshot()
+
+    restored = MRRArrayPlant(
+        num_rings=3,
+        comb_wavelengths_nm=comb,
+        config=MRRPlantConfig(thermal_tau_ms=7.0, drift_sigma_nm_per_s=0.003),
+        rng=np.random.default_rng(0),
+        action_config=ActionExecutorConfig(slew_rate_v_per_ms=2.0),
+    )
+    restored.restore(snapshot)
+
+    live_future = plant.step(5.0)
+    restored_future = restored.step(5.0)
+
+    assert np.allclose(live_future.actuator_voltages_v, restored_future.actuator_voltages_v)
+    assert np.allclose(live_future.thermal_powers_mw, restored_future.thermal_powers_mw)
+    assert np.allclose(live_future.drift_nm, restored_future.drift_nm)
+    assert np.allclose(live_future.effective_resonances_nm, restored_future.effective_resonances_nm)
+
+
+def test_runtime_fork_preserves_measurement_cache_and_rng():
+    comb = build_comb_wavelengths(center_nm=1550.0, fsr_nm=0.73, num_lines=3)
+    runtime = SimulationRuntime(
+        plant=MRRArrayPlant(
+            num_rings=3,
+            comb_wavelengths_nm=comb,
+            config=MRRPlantConfig(drift_sigma_nm_per_s=0.0),
+            rng=np.random.default_rng(12),
+        ),
+        pd_instrument=PDInstrument(
+            PDInstrumentConfig(frame_period_ms=2.0, noise_sigma=0.0),
+            rng=np.random.default_rng(13),
+        ),
+        osa_instrument=OSAInstrument(
+            OSAInstrumentConfig(frame_period_ms=5.0, amplitude_noise_sigma=0.0),
+            rng=np.random.default_rng(14),
+        ),
+    )
+
+    runtime.read_pd()
+    runtime.read_osa()
+    clone = runtime.fork()
+
+    runtime.step(1.0)
+    clone.step(1.0)
+    pd_live = runtime.read_pd()
+    pd_clone = clone.read_pd()
+    assert pd_live.quality_flag == pd_clone.quality_flag == "stale"
+    assert pd_live.metadata["source_timestamp_ms"] == pd_clone.metadata["source_timestamp_ms"]
+
+    runtime.step(5.0)
+    clone.step(5.0)
+    osa_live = runtime.read_osa()
+    osa_clone = clone.read_osa()
+    assert osa_live.quality_flag == osa_clone.quality_flag == "fresh"
+    assert np.allclose(osa_live.payload["wavelengths_nm"], osa_clone.payload["wavelengths_nm"])
+    assert np.allclose(osa_live.payload["spectrum_dbm"], osa_clone.payload["spectrum_dbm"])

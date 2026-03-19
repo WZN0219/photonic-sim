@@ -1,6 +1,8 @@
+import copy
 from typing import Optional
 
 from .instruments import OSAInstrument, PDInstrument
+from .types import RuntimeSnapshot
 
 
 class SimulationRuntime:
@@ -13,6 +15,42 @@ class SimulationRuntime:
         self.osa = osa_instrument
         self.action_log: list[dict] = []
         self.measurement_log: list[dict] = []
+
+    def snapshot(self) -> RuntimeSnapshot:
+        return RuntimeSnapshot(
+            plant_snapshot=self.plant.snapshot(),
+            pd_snapshot=None if self.pd is None else self.pd.snapshot(),
+            osa_snapshot=None if self.osa is None else self.osa.snapshot(),
+            action_log=copy.deepcopy(self.action_log),
+            measurement_log=copy.deepcopy(self.measurement_log),
+        )
+
+    def restore(self, snapshot: RuntimeSnapshot) -> None:
+        self.plant.restore(snapshot.plant_snapshot)
+        if snapshot.pd_snapshot is None:
+            self.pd = None
+        else:
+            if self.pd is None:
+                self.pd = PDInstrument()
+            self.pd.restore(snapshot.pd_snapshot)
+        if snapshot.osa_snapshot is None:
+            self.osa = None
+        else:
+            if self.osa is None:
+                self.osa = OSAInstrument()
+            self.osa.restore(snapshot.osa_snapshot)
+        self.action_log = copy.deepcopy(snapshot.action_log)
+        self.measurement_log = copy.deepcopy(snapshot.measurement_log)
+
+    def fork(self) -> "SimulationRuntime":
+        clone = SimulationRuntime(
+            plant=self.plant.fork(),
+            pd_instrument=None if self.pd is None else self.pd.fork(),
+            osa_instrument=None if self.osa is None else self.osa.fork(),
+        )
+        clone.action_log = copy.deepcopy(self.action_log)
+        clone.measurement_log = copy.deepcopy(self.measurement_log)
+        return clone
 
     def apply_voltage(self, channel: int, voltage_v: float):
         ack = self.plant.issue_command(channel, voltage_v)
