@@ -198,6 +198,22 @@ examples/outputs/mrr_visual_overview/
 - 串扰矩阵热图
 - 单个 ring 向周围 ring 的串扰衰减分布
 
+### Resonance Positions
+
+![MRR Resonance Positions](examples/outputs/mrr_visual_overview/resonance_positions.png)
+
+### Through Spectrum
+
+![Through Spectrum](examples/outputs/mrr_visual_overview/through_spectrum.png)
+
+### Crosstalk Matrix
+
+![Crosstalk Matrix](examples/outputs/mrr_visual_overview/crosstalk_matrix.png)
+
+### Crosstalk Profile
+
+![Crosstalk Profile](examples/outputs/mrr_visual_overview/crosstalk_profile.png)
+
 ## 如何验证
 
 ### 1. 运行测试
